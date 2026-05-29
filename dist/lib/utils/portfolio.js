@@ -13,7 +13,7 @@ const prompts_1 = require("./prompts");
 const strategies_1 = require("./strategies");
 const __1 = require("..");
 async function getPortfolioForNetwork(address, network, customFetch) {
-    const provider = (0, getRpcProvider_1.getRpcProvider)(network.rpcUrls, network.chainId);
+    const provider = (0, getRpcProvider_1.getRpcProvider)(network.rpcUrls, network.chainId, network.selectedRpcUrl);
     const portfolio = new portfolio_1.Portfolio(customFetch || node_fetch_1.default, provider, network, 'https://relayer.ambire.com/velcro-v3');
     return portfolio
         .get(address, { baseCurrency: 'usd' })
@@ -37,13 +37,17 @@ async function getPortfolioVelcroV3(address, networks = networks_1.networks, cus
             const balance = Number(t.amount) / Math.pow(10, t.decimals);
             const priceUSD = (t.priceIn.find((p) => p.baseCurrency === 'usd') || { price: 0 })
                 .price;
+            const priceChange24h = (t.marketDataIn.find((p) => p.baseCurrency === 'usd') || { change24h: 0 })
+                .change24h || 0;
             return {
                 symbol: t.symbol,
                 balanceRaw: t.amount.toString(),
                 balance,
                 balanceUSD: balance * priceUSD,
                 address: t.address,
-                decimals: t.decimals
+                decimals: t.decimals,
+                priceUSD,
+                priceChange24h
             };
         });
         if (!tokens.length) {
@@ -54,7 +58,7 @@ async function getPortfolioVelcroV3(address, networks = networks_1.networks, cus
             name: matchedNetwork.name,
             chainId: matchedNetwork.chainId.toString(),
             platformId: matchedNetwork.platformId,
-            explorerUrl: matchedNetwork.explorerUrl,
+            explorerUrl: matchedNetwork.explorerUrl || '',
             iconUrls: matchedNetwork.iconUrls || []
         };
         output.push({
