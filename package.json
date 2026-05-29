@@ -1,6 +1,6 @@
 {
     "name": "aura",
-    "version": "0.1.6",
+    "version": "0.1.7",
     "main": "dist/lib/index.js",
     "repository": "git@github.com:AmbireTech/aura.git",
     "description": "Recommendation engine and onchain activity analyzer that leverages publicly available data from Ethereum and Layer 2 blockchains",
