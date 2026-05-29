@@ -2,7 +2,7 @@ import { TokenResult } from 'ambire-common/dist/src/libs/portfolio/interfaces'
 
 export type PortfolioLibToken = Pick<
     TokenResult,
-    'symbol' | 'address' | 'chainId' | 'decimals' | 'amount' | 'priceIn'
+    'symbol' | 'address' | 'chainId' | 'decimals' | 'amount' | 'priceIn' | 'marketDataIn'
 >
 export type NetworkPortfolioLibResponse = {
     tokens: PortfolioLibToken[]
@@ -16,6 +16,8 @@ export type PortfolioToken = {
     balanceUSD: number
     symbol: string
     decimals: number
+    priceUSD: number
+    priceChange24h: number
 }
 
 export type PortfolioNetworkInfo = {

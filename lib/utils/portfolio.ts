@@ -21,7 +21,7 @@ export async function getPortfolioForNetwork(
     network: Network,
     customFetch?: Fetch
 ): Promise<NetworkPortfolioLibResponse> {
-    const provider = getRpcProvider(network.rpcUrls, network.chainId)
+    const provider = getRpcProvider(network.rpcUrls, network.chainId, network.selectedRpcUrl)
     const portfolio = new Portfolio(
         customFetch || fetch,
         provider,
@@ -61,6 +61,9 @@ export async function getPortfolioVelcroV3(
                 const balance = Number(t.amount) / Math.pow(10, t.decimals)
                 const priceUSD = (t.priceIn.find((p) => p.baseCurrency === 'usd') || { price: 0 })
                     .price
+                const priceChange24h =
+                    (t.marketDataIn.find((p) => p.baseCurrency === 'usd') || { change24h: 0 })
+                        .change24h || 0
 
                 return {
                     symbol: t.symbol,
@@ -68,7 +71,9 @@ export async function getPortfolioVelcroV3(
                     balance,
                     balanceUSD: balance * priceUSD,
                     address: t.address,
-                    decimals: t.decimals
+                    decimals: t.decimals,
+                    priceUSD,
+                    priceChange24h
                 }
             })
 
@@ -81,7 +86,7 @@ export async function getPortfolioVelcroV3(
             name: matchedNetwork.name,
             chainId: matchedNetwork.chainId.toString(),
             platformId: matchedNetwork.platformId,
-            explorerUrl: matchedNetwork.explorerUrl,
+            explorerUrl: matchedNetwork.explorerUrl || '',
             iconUrls: matchedNetwork.iconUrls || []
         }
 

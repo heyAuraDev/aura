@@ -29,6 +29,12 @@ const mockedNetworkPortfolioResult: NetworkPortfolioLibResponse = {
                     baseCurrency: 'usd',
                     price: USDC_PRICE
                 }
+            ],
+            marketDataIn: [
+                {
+                    baseCurrency: 'usd',
+                    change24h: 0.05
+                }
             ]
         }
     ]
