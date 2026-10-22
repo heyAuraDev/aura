@@ -4,9 +4,19 @@ import { Network } from 'ambire-common/dist/src/interfaces/network'
 import { Fetch } from 'ambire-common/dist/src/interfaces/fetch'
 import { getRpcProvider } from 'ambire-common/dist/src/services/provider/getRpcProvider'
 import { Portfolio } from 'ambire-common/dist/src/libs/portfolio'
+import {
+    convertApiTokenDataToTokenDataCache,
+    formatExternalHintsAPIResponse,
+    getTokenDataCacheKey
+} from 'ambire-common/dist/src/libs/portfolio/helpers'
+import {
+    ExternalPortfolioDiscoveryResponse,
+    TokenDataCache
+} from 'ambire-common/dist/src/libs/portfolio/interfaces'
 import { llmMockProcess } from './llm/mockedAI'
 import { simplePrompt } from './prompts'
 import { EMPTY_PORTFOLIO_STRATEGIES } from './strategies'
+import { timeoutPromise } from './timing'
 import {
     PortfolioForNetwork,
     ProcessAddressProps,
@@ -16,21 +26,70 @@ import {
 } from '../types'
 import { stringifyError } from '..'
 
+const VELCRO_URL = 'https://relayer.ambire.com/velcro-v3'
+const VELCRO_TIMEOUT_SECONDS = 6
+
+// One Velcro request for all networks. It returns the token and NFT addresses the account
+// probably holds and some prices, but no balances - those are read on-chain by the Portfolio lib
+export async function getPortfolioDiscovery(
+    address: string,
+    networks: Network[] = commonNetworks,
+    customFetch?: Fetch
+): Promise<ExternalPortfolioDiscoveryResponse[]> {
+    const fetchFn: Fetch = customFetch || fetch
+    const chainIds = networks.map((n) => n.chainId.toString()).join(',')
+    // DeFi positions aren't used, so Velcro can return its cached ones instead of refreshing them
+    const url = `${VELCRO_URL}/portfolio?networks=${chainIds}&account=${address}&baseCurrency=usd&defi=cache`
+
+    const request = fetchFn(url).then(async (response) => {
+        const body = await response.json()
+
+        if (!response.ok || !Array.isArray(body)) {
+            throw new Error(
+                body?.message || body?.error || `Velcro responded with ${response.status}`
+            )
+        }
+
+        return body
+    })
+
+    return timeoutPromise(request, VELCRO_TIMEOUT_SECONDS, 'Velcro discovery timed out')
+}
+
 export async function getPortfolioForNetwork(
     address: string,
     network: Network,
-    customFetch?: Fetch
+    customFetch?: Fetch,
+    // Without it only the native token, gas tank fee tokens and pinned tokens are checked
+    discovery?: ExternalPortfolioDiscoveryResponse
 ): Promise<NetworkPortfolioLibResponse> {
     const provider = getRpcProvider(network.rpcUrls, network.chainId, network.selectedRpcUrl)
-    const portfolio = new Portfolio(
-        customFetch || fetch,
-        provider,
-        network,
-        'https://relayer.ambire.com/velcro-v3'
-    )
+    const portfolio = new Portfolio(customFetch || fetch, provider, network)
+    const hints = discovery ? formatExternalHintsAPIResponse(discovery) : null
+
+    // Tokens priced here aren't requested from cena again
+    const tokenDataCache: TokenDataCache = new Map()
+    Object.entries(discovery?.prices || {}).forEach(([tokenAddress, priceData]) => {
+        if (typeof priceData?.price !== 'number') return
+
+        tokenDataCache.set(getTokenDataCacheKey(tokenAddress), [
+            Date.now(),
+            convertApiTokenDataToTokenDataCache(priceData)
+        ])
+    })
 
     return portfolio
-        .get(address, { baseCurrency: 'usd' })
+        .get(address, {
+            baseCurrency: 'usd',
+            // Without it the lib calls the deprecated /velcro-v3/multi-hints endpoint
+            disableAutoDiscovery: true,
+            additionalErc20Hints: hints?.erc20s ?? [],
+            additionalErc721Hints: hints?.erc721s ?? {},
+            // Passing it, even empty, turns on the lib's token filter. It drops the hinted tokens with
+            // no balance and ERC-20 copies of the native token (e.g. POL on Polygon), counted twice otherwise
+            specialErc20Hints: { custom: [], hidden: [], learn: [] },
+            tokenDataCache
+        })
         .then((data) => data)
         .catch((err) => {
             const error = stringifyError(err)
@@ -50,8 +109,22 @@ export async function getPortfolioVelcroV3(
 ): Promise<PortfolioForNetwork[]> {
     const output: PortfolioForNetwork[] = []
 
+    // Without discovery fewer tokens are found, but the portfolio is still usable
+    const discovery = await getPortfolioDiscovery(address, networks, customFetch).catch((err) => {
+        console.error(`Error fetching portfolio discovery for ${address}: ${stringifyError(err)}`)
+        return []
+    })
+
     const responses = await Promise.all(
-        networks.map((network) => getPortfolioForNetwork(address, network, customFetch))
+        networks.map((network) =>
+            getPortfolioForNetwork(
+                address,
+                network,
+                customFetch,
+                // Velcro returns some chain ids as numbers and others as strings
+                discovery.find((entry) => String(entry.chainId) === network.chainId.toString())
+            )
+        )
     )
 
     for (const resp of responses) {
