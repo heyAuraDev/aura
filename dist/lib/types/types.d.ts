@@ -25,6 +25,58 @@ export type PortfolioForNetwork = {
     network: PortfolioNetworkInfo;
     tokens: PortfolioToken[];
 };
+export type DefiMode = 'cache' | 'default' | 'force';
+export type PortfolioDefiAssetType = 'liquidity' | 'collateral' | 'borrow' | 'reward' | 'margin' | 'perpetual' | 'prediction';
+export type PortfolioDefiAsset = {
+    address?: string;
+    balanceRaw: string;
+    balance: number;
+    balanceUSD: number;
+    symbol: string;
+    decimals: number;
+    priceUSD: number;
+    type: PortfolioDefiAssetType;
+};
+export type PortfolioDefiPosition = {
+    providerName: string;
+    providerUrl: string;
+    providerIconUrl: string;
+    name?: string;
+    description?: string;
+    poolId?: string;
+    healthRate?: number;
+    balanceUSD: number;
+    collateralUSD?: number;
+    debtUSD?: number;
+    perpetual?: {
+        side: string;
+        entryPrice: number;
+        markPrice: number;
+        liquidationPrice: number;
+        leverage: number;
+        pnlUSD: number;
+        marginRate: number;
+        dailyFundingRate: number;
+    };
+    prediction?: {
+        market: string;
+        side: string;
+        eventEndAt?: number;
+        isMarketClosed?: boolean;
+    };
+    assets: PortfolioDefiAsset[];
+};
+export type PortfolioWithDefiForNetwork = PortfolioForNetwork & {
+    defiPositions: PortfolioDefiPosition[] | null;
+};
+export type PortfolioDiscoveryOptions = {
+    defiMode?: DefiMode;
+    includeAppPositions?: boolean;
+};
+export type PortfolioWithDefi = {
+    portfolio: PortfolioWithDefiForNetwork[];
+    appPositions?: PortfolioDefiPosition[] | null;
+};
 export declare enum StrategyRisk {
     LOW = "low",
     MODERATE = "moderate",

@@ -25,7 +25,7 @@ export declare const ActionZodSchema: z.ZodObject<{
         url: string;
     }[];
     networks: string[];
-    operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+    operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
     apy: string;
 }, {
     flags: string[];
@@ -36,7 +36,7 @@ export declare const ActionZodSchema: z.ZodObject<{
         url: string;
     }[];
     networks: string[];
-    operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+    operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
     apy: string;
 }>;
 export declare const StrategyZodSchema: z.ZodObject<{
@@ -68,7 +68,7 @@ export declare const StrategyZodSchema: z.ZodObject<{
             url: string;
         }[];
         networks: string[];
-        operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+        operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
         apy: string;
     }, {
         flags: string[];
@@ -79,7 +79,7 @@ export declare const StrategyZodSchema: z.ZodObject<{
             url: string;
         }[];
         networks: string[];
-        operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+        operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
         apy: string;
     }>, "many">;
 }, "strip", z.ZodTypeAny, {
@@ -94,7 +94,7 @@ export declare const StrategyZodSchema: z.ZodObject<{
             url: string;
         }[];
         networks: string[];
-        operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+        operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
         apy: string;
     }[];
 }, {
@@ -109,7 +109,7 @@ export declare const StrategyZodSchema: z.ZodObject<{
             url: string;
         }[];
         networks: string[];
-        operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+        operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
         apy: string;
     }[];
 }>;
@@ -143,7 +143,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }, {
             flags: string[];
@@ -154,7 +154,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }>, "many">;
     }, "strip", z.ZodTypeAny, {
@@ -169,7 +169,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }[];
     }, {
@@ -184,7 +184,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }[];
     }>, "many">;
@@ -201,7 +201,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }[];
     }[];
@@ -218,7 +218,7 @@ export declare const StrategiesZodSchema: z.ZodObject<{
                 url: string;
             }[];
             networks: string[];
-            operations: ("staking" | "lending" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
+            operations: ("lending" | "staking" | "borrowing" | "liquidity provision" | "yield farming" | "governance farming" | "bridging" | "holding" | "swapping")[];
             apy: string;
         }[];
     }[];
