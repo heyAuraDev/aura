@@ -33,6 +33,51 @@ export type PortfolioForNetwork = {
     tokens: PortfolioToken[]
 }
 
+// Velcro's DeFi update modes
+// - cache: stored positions, however old
+// - default: stored positions if fresh, otherwise refetched
+// - force: refetched positions, with a per-account cooldown on Velcro's side
+export type DefiMode = 'cache' | 'default' | 'force'
+
+export type PortfolioDefiAssetType =
+    | 'liquidity'
+    | 'collateral'
+    | 'borrow'
+    | 'reward'
+    | 'margin'
+    | 'perpetual'
+    | 'prediction'
+
+export type PortfolioDefiAsset = {
+    // Undefined only for app positions without a token, e.g. Polymarket
+    address?: string
+    balanceRaw: string
+    balance: number
+    balanceUSD: number
+    symbol: string
+    decimals: number
+    priceUSD: number
+    type: PortfolioDefiAssetType
+}
+
+export type PortfolioDefiPosition = {
+    providerName: string
+    providerUrl: string
+    providerIconUrl: string
+    // The kind of position, e.g. 'Lending', 'Liquidity Pool', 'Staked'
+    name?: string
+    poolId?: string
+    healthRate?: number
+    // Borrowed assets are subtracted
+    balanceUSD: number
+    assets: PortfolioDefiAsset[]
+}
+
+export type PortfolioWithDefiForNetwork = PortfolioForNetwork & {
+    // null when the positions couldn't be fetched, which is different from having none
+    defiPositions: PortfolioDefiPosition[] | null
+}
+
 export enum StrategyRisk {
     LOW = 'low',
     MODERATE = 'moderate',

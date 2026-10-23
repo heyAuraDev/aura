@@ -13,6 +13,8 @@ import {
     ExternalPortfolioDiscoveryResponse,
     TokenDataCache
 } from 'ambire-common/dist/src/libs/portfolio/interfaces'
+import { getFormattedApiPositions } from 'ambire-common/dist/src/libs/defiPositions/defiPositions'
+import { AssetType } from 'ambire-common/dist/src/libs/defiPositions/types'
 import { llmMockProcess } from './llm/mockedAI'
 import { simplePrompt } from './prompts'
 import { EMPTY_PORTFOLIO_STRATEGIES } from './strategies'
@@ -22,24 +24,45 @@ import {
     ProcessAddressProps,
     AuraResponse_01,
     NetworkPortfolioLibResponse,
-    PortfolioNetworkInfo
+    PortfolioNetworkInfo,
+    PortfolioLibToken,
+    PortfolioToken,
+    DefiMode,
+    PortfolioDefiAssetType,
+    PortfolioDefiPosition,
+    PortfolioWithDefiForNetwork
 } from '../types'
 import { stringifyError } from '..'
 
 const VELCRO_URL = 'https://relayer.ambire.com/velcro-v3'
 const VELCRO_TIMEOUT_SECONDS = 6
+// Velcro may refetch the DeFi positions before it responds, and the token hints come in the same response
+const VELCRO_DEFI_TIMEOUT_SECONDS = 30
+
+const DEFI_ASSET_TYPES: Record<AssetType, PortfolioDefiAssetType> = {
+    [AssetType.Liquidity]: 'liquidity',
+    [AssetType.Collateral]: 'collateral',
+    [AssetType.Borrow]: 'borrow',
+    [AssetType.Reward]: 'reward',
+    [AssetType.Margin]: 'margin',
+    [AssetType.Perpetual]: 'perpetual',
+    [AssetType.Prediction]: 'prediction'
+}
 
 // One Velcro request for all networks. It returns the token and NFT addresses the account
-// probably holds and some prices, but no balances - those are read on-chain by the Portfolio lib
+// probably holds and some prices, but no balances - those are read on-chain by the Portfolio lib.
+// It also returns the DeFi positions, as fresh as `defiMode` asks for
 export async function getPortfolioDiscovery(
     address: string,
     networks: Network[] = commonNetworks,
-    customFetch?: Fetch
+    customFetch?: Fetch,
+    defiMode: DefiMode = 'cache'
 ): Promise<ExternalPortfolioDiscoveryResponse[]> {
     const fetchFn: Fetch = customFetch || fetch
     const chainIds = networks.map((n) => n.chainId.toString()).join(',')
-    // DeFi positions aren't used, so Velcro can return its cached ones instead of refreshing them
-    const url = `${VELCRO_URL}/portfolio?networks=${chainIds}&account=${address}&baseCurrency=usd&defi=cache`
+    const url = `${VELCRO_URL}/portfolio?networks=${chainIds}&account=${address}&baseCurrency=usd&defi=${defiMode}`
+    const timeoutSeconds =
+        defiMode === 'cache' ? VELCRO_TIMEOUT_SECONDS : VELCRO_DEFI_TIMEOUT_SECONDS
 
     const request = fetchFn(url).then(async (response) => {
         const body = await response.json()
@@ -53,7 +76,7 @@ export async function getPortfolioDiscovery(
         return body
     })
 
-    return timeoutPromise(request, VELCRO_TIMEOUT_SECONDS, 'Velcro discovery timed out')
+    return timeoutPromise(request, timeoutSeconds, 'Velcro discovery timed out')
 }
 
 export async function getPortfolioForNetwork(
@@ -102,74 +125,149 @@ export async function getPortfolioForNetwork(
         })
 }
 
+function formatPortfolioTokens(tokens: PortfolioLibToken[]): PortfolioToken[] {
+    return tokens
+        .filter((t) => t.amount > 0n)
+        .map((t) => {
+            const balance = Number(t.amount) / Math.pow(10, t.decimals)
+            const priceUSD = (t.priceIn.find((p) => p.baseCurrency === 'usd') || { price: 0 }).price
+            const priceChange24h =
+                (t.marketDataIn.find((p) => p.baseCurrency === 'usd') || { change24h: 0 })
+                    .change24h || 0
+
+            return {
+                symbol: t.symbol,
+                balanceRaw: t.amount.toString(),
+                balance,
+                balanceUSD: balance * priceUSD,
+                address: t.address,
+                decimals: t.decimals,
+                priceUSD,
+                priceChange24h
+            }
+        })
+}
+
+function getNetworkInfo(network: Network): PortfolioNetworkInfo {
+    return {
+        name: network.name,
+        chainId: network.chainId.toString(),
+        platformId: network.platformId,
+        explorerUrl: network.explorerUrl || '',
+        iconUrls: network.iconUrls || []
+    }
+}
+
+// Velcro groups the positions by provider, here they are flattened to one entry per position
+function formatDefiPositions(
+    network: Network,
+    discovery?: ExternalPortfolioDiscoveryResponse
+): PortfolioDefiPosition[] | null {
+    if (!discovery) return null
+
+    const { defi } = discovery
+    if (!defi || 'errorState' in defi) {
+        const error = defi?.errorState[0]?.message || 'Unknown error'
+        console.error(`Error fetching DeFi positions for network ${network.name}: ${error}`)
+        return null
+    }
+
+    // An account with no DeFi positions gets an empty object back, not an error
+    const providers = getFormattedApiPositions('positions' in defi ? defi.positions || [] : [])
+
+    return providers.flatMap((provider) =>
+        provider.positions.map((position) => ({
+            providerName: provider.providerName,
+            providerUrl: provider.siteUrl,
+            providerIconUrl: provider.iconUrl,
+            name: position.additionalData.name,
+            poolId: position.additionalData.pool?.id,
+            healthRate: position.additionalData.healthRate ?? undefined,
+            balanceUSD: position.additionalData.positionInUSD || 0,
+            assets: position.assets.map((asset) => {
+                const balance = Number(asset.amount) / Math.pow(10, asset.decimals)
+                const priceUSD = asset.priceIn?.price || 0
+
+                return {
+                    address: asset.address,
+                    balanceRaw: asset.amount.toString(),
+                    balance,
+                    balanceUSD: asset.value ?? balance * priceUSD,
+                    symbol: asset.symbol,
+                    decimals: asset.decimals,
+                    priceUSD,
+                    type: DEFI_ASSET_TYPES[asset.type]
+                }
+            })
+        }))
+    )
+}
+
+// One Velcro request for all networks, then the token balances of each network
+async function getNetworkPortfolios(
+    address: string,
+    networks: Network[],
+    customFetch: Fetch | undefined,
+    defiMode: DefiMode
+) {
+    // Without discovery fewer tokens are found, but the portfolio is still usable
+    const discovery = await getPortfolioDiscovery(address, networks, customFetch, defiMode).catch(
+        (err) => {
+            console.error(
+                `Error fetching portfolio discovery for ${address}: ${stringifyError(err)}`
+            )
+            return []
+        }
+    )
+
+    return Promise.all(
+        networks.map(async (network) => {
+            // Velcro returns some chain ids as numbers and others as strings
+            const networkDiscovery = discovery.find(
+                (entry) => String(entry.chainId) === network.chainId.toString()
+            )
+            const { tokens } = await getPortfolioForNetwork(
+                address,
+                network,
+                customFetch,
+                networkDiscovery
+            )
+
+            return { network, discovery: networkDiscovery, tokens: formatPortfolioTokens(tokens) }
+        })
+    )
+}
+
 export async function getPortfolioVelcroV3(
     address: string,
     networks: Network[] = commonNetworks,
     customFetch?: Fetch
 ): Promise<PortfolioForNetwork[]> {
-    const output: PortfolioForNetwork[] = []
+    // DeFi positions aren't used, so Velcro can return its cached ones instead of refreshing them
+    const networkPortfolios = await getNetworkPortfolios(address, networks, customFetch, 'cache')
 
-    // Without discovery fewer tokens are found, but the portfolio is still usable
-    const discovery = await getPortfolioDiscovery(address, networks, customFetch).catch((err) => {
-        console.error(`Error fetching portfolio discovery for ${address}: ${stringifyError(err)}`)
-        return []
-    })
+    return networkPortfolios
+        .filter(({ tokens }) => tokens.length > 0)
+        .map(({ network, tokens }) => ({ network: getNetworkInfo(network), tokens }))
+}
 
-    const responses = await Promise.all(
-        networks.map((network) =>
-            getPortfolioForNetwork(
-                address,
-                network,
-                customFetch,
-                // Velcro returns some chain ids as numbers and others as strings
-                discovery.find((entry) => String(entry.chainId) === network.chainId.toString())
-            )
-        )
-    )
+// The same as getPortfolioVelcroV3, plus the DeFi positions from the same Velcro request.
+// Networks with DeFi positions but no tokens are included too
+export async function getPortfolioWithDefiVelcroV3(
+    address: string,
+    networks: Network[] = commonNetworks,
+    customFetch?: Fetch,
+    defiMode: DefiMode = 'default'
+): Promise<PortfolioWithDefiForNetwork[]> {
+    const networkPortfolios = await getNetworkPortfolios(address, networks, customFetch, defiMode)
 
-    for (const resp of responses) {
-        const tokens = resp.tokens
-            .filter((t) => t.amount > 0n)
-            .map((t) => {
-                const balance = Number(t.amount) / Math.pow(10, t.decimals)
-                const priceUSD = (t.priceIn.find((p) => p.baseCurrency === 'usd') || { price: 0 })
-                    .price
-                const priceChange24h =
-                    (t.marketDataIn.find((p) => p.baseCurrency === 'usd') || { change24h: 0 })
-                        .change24h || 0
-
-                return {
-                    symbol: t.symbol,
-                    balanceRaw: t.amount.toString(),
-                    balance,
-                    balanceUSD: balance * priceUSD,
-                    address: t.address,
-                    decimals: t.decimals,
-                    priceUSD,
-                    priceChange24h
-                }
-            })
-
-        if (!tokens.length) {
-            continue
-        }
-
-        const matchedNetwork = networks.find((n) => n.chainId === resp.tokens[0].chainId) as Network
-        const networkInfo: PortfolioNetworkInfo = {
-            name: matchedNetwork.name,
-            chainId: matchedNetwork.chainId.toString(),
-            platformId: matchedNetwork.platformId,
-            explorerUrl: matchedNetwork.explorerUrl || '',
-            iconUrls: matchedNetwork.iconUrls || []
-        }
-
-        output.push({
-            network: networkInfo,
-            tokens
-        })
-    }
-
-    return output
+    return networkPortfolios
+        .map(({ network, discovery, tokens }) => ({
+            network: getNetworkInfo(network),
+            tokens,
+            defiPositions: formatDefiPositions(network, discovery)
+        }))
+        .filter(({ tokens, defiPositions }) => tokens.length > 0 || !!defiPositions?.length)
 }
 
 export const processAddress = async (

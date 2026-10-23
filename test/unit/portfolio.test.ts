@@ -3,6 +3,7 @@ import { EMPTY_PORTFOLIO_STRATEGIES } from '../../lib'
 import {
     LlmProcessOutput,
     NetworkPortfolioLibResponse,
+    PortfolioDefiPosition,
     PortfolioLibToken,
     StrategyRisk
 } from '../../lib/types'
@@ -10,6 +11,7 @@ import {
     getPortfolioDiscovery,
     getPortfolioForNetwork,
     getPortfolioVelcroV3,
+    getPortfolioWithDefiVelcroV3,
     processAddress
 } from '../../lib/utils/portfolio'
 import { simplePrompt } from '../../lib/utils/prompts'
@@ -23,6 +25,9 @@ import {
 
 const TEST_WALLET = '0x69bfD720Dd188B8BB04C4b4D24442D3c15576D10'
 const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+const WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+const AAVE_POOL = '0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2'
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const NFT_WITH_IDS = '0x1111111111111111111111111111111111111111'
 const NFT_ENUMERABLE = '0x2222222222222222222222222222222222222222'
 const USDC_PRICE = 0.99
@@ -67,6 +72,133 @@ const mockedDiscovery: ExternalPortfolioDiscoveryResponse = {
     defi: { positions: [], updatedAt: 0 },
     otherNetworksDefiCounts: {}
 }
+// Shaped like the raw Velcro JSON. The lib's type describes the positions after
+// getFormattedApiPositions, which also changes them in place, so each test gets a new copy
+const velcroDefi = () =>
+    ({
+        positions: [
+            {
+                providerName: 'Aave V3',
+                chainId: 1,
+                iconUrl: 'https://example.com/aave.png',
+                siteUrl: 'https://app.aave.com',
+                type: 'lending',
+                positionInUSD: 4000,
+                positions: [
+                    {
+                        id: 'aave-1',
+                        assets: [
+                            {
+                                address: WETH_ADDRESS.toLowerCase(),
+                                symbol: 'WETH',
+                                name: 'Wrapped Ether',
+                                decimals: 18,
+                                amount: '2000000000000000000',
+                                priceIn: { price: 2500, baseCurrency: 'usd' },
+                                value: 5000,
+                                type: 1
+                            },
+                            {
+                                address: USDC_ADDRESS.toLowerCase(),
+                                symbol: 'USDC',
+                                name: 'USD Coin',
+                                decimals: 6,
+                                amount: '1000000000',
+                                priceIn: { price: 1, baseCurrency: 'usd' },
+                                value: 1000,
+                                type: 2
+                            }
+                        ],
+                        additionalData: {
+                            name: 'Lending',
+                            healthRate: 1.8,
+                            positionInUSD: 4000,
+                            pool: { id: AAVE_POOL }
+                        }
+                    }
+                ]
+            },
+            {
+                providerName: 'Lido',
+                chainId: 1,
+                iconUrl: 'https://example.com/lido.png',
+                siteUrl: 'https://lido.fi',
+                type: 'common',
+                positionInUSD: 1250,
+                positions: [
+                    {
+                        id: 'lido-1',
+                        assets: [
+                            {
+                                // DeBank's id for the native token, without a value
+                                address: 'eth',
+                                symbol: 'ETH',
+                                name: 'Ether',
+                                decimals: 18,
+                                amount: '500000000000000000',
+                                priceIn: { price: 2500, baseCurrency: 'usd' },
+                                type: 0
+                            }
+                        ],
+                        additionalData: { name: 'Staked', positionInUSD: 1250 }
+                    }
+                ]
+            }
+        ],
+        updatedAt: 0
+    }) as unknown as ExternalPortfolioDiscoveryResponse['defi']
+const expectedDefiPositions: PortfolioDefiPosition[] = [
+    {
+        providerName: 'Aave V3',
+        providerUrl: 'https://app.aave.com',
+        providerIconUrl: 'https://example.com/aave.png',
+        name: 'Lending',
+        poolId: AAVE_POOL,
+        healthRate: 1.8,
+        balanceUSD: 4000,
+        assets: [
+            {
+                address: WETH_ADDRESS,
+                balanceRaw: '2000000000000000000',
+                balance: 2,
+                balanceUSD: 5000,
+                symbol: 'WETH',
+                decimals: 18,
+                priceUSD: 2500,
+                type: 'collateral'
+            },
+            {
+                address: USDC_ADDRESS,
+                balanceRaw: '1000000000',
+                balance: 1000,
+                balanceUSD: 1000,
+                symbol: 'USDC',
+                decimals: 6,
+                priceUSD: 1,
+                type: 'borrow'
+            }
+        ]
+    },
+    {
+        providerName: 'Lido',
+        providerUrl: 'https://lido.fi',
+        providerIconUrl: 'https://example.com/lido.png',
+        name: 'Staked',
+        balanceUSD: 1250,
+        assets: [
+            {
+                address: ZERO_ADDRESS,
+                balanceRaw: '500000000000000000',
+                balance: 0.5,
+                balanceUSD: 1250,
+                symbol: 'ETH',
+                decimals: 18,
+                priceUSD: 2500,
+                type: 'liquidity'
+            }
+        ]
+    }
+]
 const mockedLlmOutput: LlmProcessOutput = {
     llm: {
         provider: 'mock',
@@ -97,6 +229,7 @@ const mockFetchResponse = (body: any, status = 200) =>
 
 jest.mock('node-fetch', () => jest.fn())
 const mockedFetch = fetch as unknown as jest.Mock
+const getRequestedUrl = () => new URL(mockedFetch.mock.calls[0][0])
 
 jest.mock('ambire-common/dist/src/consts/networks', () => {
     const actual = jest.requireActual('ambire-common/dist/src/consts/networks')
@@ -185,6 +318,38 @@ describe('Portfolio unit tests', () => {
         expect(url.searchParams.get('networks')).toEqual('1')
         expect(url.searchParams.get('account')).toEqual(TEST_WALLET)
         expect(url.searchParams.get('baseCurrency')).toEqual('usd')
+        expect(url.searchParams.get('defi')).toEqual('cache')
+    })
+
+    test('should request the given DeFi mode from Velcro', async () => {
+        await getPortfolioDiscovery(TEST_WALLET, commonNetworks, undefined, 'force')
+
+        expect(getRequestedUrl().searchParams.get('defi')).toEqual('force')
+    })
+
+    test('should wait longer for Velcro when DeFi positions may be refetched', async () => {
+        jest.useFakeTimers()
+        try {
+            mockedFetch.mockImplementation(() => new Promise(() => {}))
+            const withCache = getPortfolioDiscovery(TEST_WALLET).catch((e) => e.message)
+            const withDefi = getPortfolioDiscovery(
+                TEST_WALLET,
+                commonNetworks,
+                undefined,
+                'default'
+            ).catch((e) => e.message)
+            let isDefiSettled = false
+            withDefi.then(() => (isDefiSettled = true))
+
+            await jest.advanceTimersByTimeAsync(6000)
+            expect(await withCache).toEqual('Velcro discovery timed out')
+            expect(isDefiSettled).toBe(false)
+
+            await jest.advanceTimersByTimeAsync(24000)
+            expect(await withDefi).toEqual('Velcro discovery timed out')
+        } finally {
+            jest.useRealTimers()
+        }
     })
 
     test('should throw when discovery responds with an error', async () => {
@@ -206,6 +371,7 @@ describe('Portfolio unit tests', () => {
         expect(res).toHaveLength(1)
         expect(res[0]).toHaveProperty('network')
         expect(res[0]).toHaveProperty('tokens')
+        expect(res[0]).not.toHaveProperty('defiPositions')
         expect(res[0].network.name).toEqual('Ethereum')
         expect(res[0].tokens).toHaveLength(1)
 
@@ -238,6 +404,83 @@ describe('Portfolio unit tests', () => {
         expect(mockPortfolioGet).toHaveBeenCalledTimes(1)
         expect(mockPortfolioGet.mock.calls[0][1].additionalErc20Hints).toEqual([])
         expect(res).toHaveLength(1)
+
+        consoleError.mockRestore()
+    })
+
+    test('should get portfolio with the DeFi positions from the same Velcro request', async () => {
+        mockedFetch.mockImplementation(() =>
+            mockFetchResponse([{ ...mockedDiscovery, defi: velcroDefi() }])
+        )
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+        expect(getRequestedUrl().searchParams.get('defi')).toEqual('default')
+        expect(mockPortfolioGet.mock.calls[0][1].additionalErc20Hints).toEqual([USDC_ADDRESS])
+
+        expect(res).toHaveLength(1)
+        expect(res[0].network.name).toEqual('Ethereum')
+        expect(res[0].tokens).toHaveLength(1)
+        expect(res[0].tokens[0].symbol).toEqual('USDC')
+        expect(res[0].defiPositions).toEqual(expectedDefiPositions)
+    })
+
+    test('should include networks with DeFi positions but no tokens', async () => {
+        mockPortfolioGet.mockReturnValue(Promise.resolve({ tokens: [] }))
+        mockedFetch.mockImplementation(() =>
+            mockFetchResponse([{ ...mockedDiscovery, defi: velcroDefi() }])
+        )
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(res).toHaveLength(1)
+        expect(res[0].tokens).toHaveLength(0)
+        expect(res[0].defiPositions).toEqual(expectedDefiPositions)
+    })
+
+    test('should leave out networks with neither tokens nor DeFi positions', async () => {
+        mockPortfolioGet.mockReturnValue(Promise.resolve({ tokens: [] }))
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(res).toHaveLength(0)
+    })
+
+    test('should return no DeFi positions, not null, when Velcro sends an empty object', async () => {
+        mockedFetch.mockImplementation(() => mockFetchResponse([{ ...mockedDiscovery, defi: {} }]))
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(res[0].defiPositions).toEqual([])
+    })
+
+    test('should keep the tokens and set DeFi positions to null when Velcro fails to get them', async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+        mockedFetch.mockImplementation(() =>
+            mockFetchResponse([
+                {
+                    ...mockedDiscovery,
+                    defi: {
+                        success: false,
+                        errorState: [{ message: 'DeBank is down', level: 'fatal' }]
+                    }
+                }
+            ])
+        )
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('DeBank is down'))
+        expect(mockPortfolioGet.mock.calls[0][1].additionalErc20Hints).toEqual([USDC_ADDRESS])
+        expect(res[0].tokens).toHaveLength(1)
+        expect(res[0].defiPositions).toBeNull()
+
+        consoleError.mockRestore()
+    })
+
+    test('should keep the tokens and set DeFi positions to null when discovery fails', async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+        mockedFetch.mockImplementation(() => Promise.reject(new Error('Network down')))
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+
+        expect(res[0].tokens).toHaveLength(1)
+        expect(res[0].defiPositions).toBeNull()
 
         consoleError.mockRestore()
     })
