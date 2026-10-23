@@ -40,13 +40,7 @@ export type PortfolioForNetwork = {
 export type DefiMode = 'cache' | 'default' | 'force'
 
 export type PortfolioDefiAssetType =
-    | 'liquidity'
-    | 'collateral'
-    | 'borrow'
-    | 'reward'
-    | 'margin'
-    | 'perpetual'
-    | 'prediction'
+    'liquidity' | 'collateral' | 'borrow' | 'reward' | 'margin' | 'perpetual' | 'prediction'
 
 export type PortfolioDefiAsset = {
     // Undefined only for app positions without a token, e.g. Polymarket
