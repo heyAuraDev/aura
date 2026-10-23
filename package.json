@@ -46,6 +46,12 @@
         "ts-node": "^10.9.2",
         "typescript": "^5.7.3"
     },
+    "resolutions": {
+        "**/eccrypto/elliptic": "^6.6.1",
+        "**/eccrypto/secp256k1": "^3.8.1",
+        "**/@ethersproject/providers/ws": "^8.21.0",
+        "**/tap-out/trim": "^0.0.3"
+    },
     "engines": {
         "node": ">=22.13.0 <23",
         "yarn": "~1.22",
