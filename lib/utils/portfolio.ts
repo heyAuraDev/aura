@@ -14,7 +14,12 @@ import {
     TokenDataCache
 } from 'ambire-common/dist/src/libs/portfolio/interfaces'
 import { getFormattedApiPositions } from 'ambire-common/dist/src/libs/defiPositions/defiPositions'
-import { AssetType } from 'ambire-common/dist/src/libs/defiPositions/types'
+import {
+    AssetType,
+    Position,
+    PositionAsset,
+    PositionsByProvider
+} from 'ambire-common/dist/src/libs/defiPositions/types'
 import { llmMockProcess } from './llm/mockedAI'
 import { simplePrompt } from './prompts'
 import { EMPTY_PORTFOLIO_STRATEGIES } from './strategies'
@@ -27,10 +32,11 @@ import {
     PortfolioNetworkInfo,
     PortfolioLibToken,
     PortfolioToken,
-    DefiMode,
+    PortfolioDefiAsset,
     PortfolioDefiAssetType,
     PortfolioDefiPosition,
-    PortfolioWithDefiForNetwork
+    PortfolioDiscoveryOptions,
+    PortfolioWithDefi
 } from '../types'
 import { stringifyError } from '..'
 
@@ -38,6 +44,8 @@ const VELCRO_URL = 'https://relayer.ambire.com/velcro-v3'
 const VELCRO_TIMEOUT_SECONDS = 6
 // Velcro may refetch the DeFi positions before it responds, and the token hints come in the same response
 const VELCRO_DEFI_TIMEOUT_SECONDS = 30
+// Velcro's id for the apps without a network, e.g. Hyperliquid and Polymarket
+const APPS_CHAIN_ID = 'customAppChain'
 
 const DEFI_ASSET_TYPES: Record<AssetType, PortfolioDefiAssetType> = {
     [AssetType.Liquidity]: 'liquidity',
@@ -56,10 +64,13 @@ export async function getPortfolioDiscovery(
     address: string,
     networks: Network[] = commonNetworks,
     customFetch?: Fetch,
-    defiMode: DefiMode = 'cache'
+    { defiMode = 'cache', includeAppPositions = false }: PortfolioDiscoveryOptions = {}
 ): Promise<ExternalPortfolioDiscoveryResponse[]> {
     const fetchFn: Fetch = customFetch || fetch
-    const chainIds = networks.map((n) => n.chainId.toString()).join(',')
+    const chainIds = [
+        ...networks.map((n) => n.chainId.toString()),
+        ...(includeAppPositions ? [APPS_CHAIN_ID] : [])
+    ].join(',')
     const url = `${VELCRO_URL}/portfolio?networks=${chainIds}&account=${address}&baseCurrency=usd&defi=${defiMode}`
     const timeoutSeconds =
         defiMode === 'cache' ? VELCRO_TIMEOUT_SECONDS : VELCRO_DEFI_TIMEOUT_SECONDS
@@ -158,9 +169,81 @@ function getNetworkInfo(network: Network): PortfolioNetworkInfo {
     }
 }
 
+// ambire-common can't parse an app amount in exponent notation, e.g. 5.3e-7, and drops the
+// whole position. A plain decimal works both with that bug and after it's fixed there
+function toPlainDecimal(amount: unknown, decimals: number): unknown {
+    if (typeof amount !== 'number' || !String(amount).includes('e')) return amount
+
+    // Numbers this large are always whole, while toFixed would keep the exponent
+    return Math.abs(amount) >= 1 ? BigInt(amount).toString() : amount.toFixed(decimals)
+}
+
+function formatDefiAsset(asset: PositionAsset): PortfolioDefiAsset {
+    const balance = Number(asset.amount) / Math.pow(10, asset.decimals)
+    // App assets have a top-level `price` instead of `priceIn`
+    const appPrice = 'price' in asset && typeof asset.price === 'number' ? asset.price : 0
+    const priceUSD = asset.priceIn?.price || appPrice
+
+    return {
+        address: asset.address,
+        balanceRaw: asset.amount.toString(),
+        balance,
+        balanceUSD: asset.value ?? balance * priceUSD,
+        symbol: asset.symbol,
+        decimals: asset.decimals,
+        priceUSD,
+        type: DEFI_ASSET_TYPES[asset.type]
+    }
+}
+
+function formatDefiPosition(
+    provider: Pick<PositionsByProvider, 'providerName' | 'siteUrl' | 'iconUrl'>,
+    position: Position
+): PortfolioDefiPosition {
+    const { additionalData } = position
+    const detailTypes: string[] = additionalData.detailTypes || []
+    // Velcro sends the debt as a negative `deptInUSD`
+    const debt = additionalData.debtInUSD ?? additionalData.deptInUSD
+
+    return {
+        providerName: provider.providerName,
+        providerUrl: provider.siteUrl,
+        providerIconUrl: provider.iconUrl,
+        name: additionalData.name,
+        description: additionalData.description,
+        // For app positions `pool` is a name, not an object
+        poolId: additionalData.pool?.id,
+        healthRate: additionalData.healthRate ?? undefined,
+        balanceUSD: additionalData.positionInUSD || 0,
+        collateralUSD: additionalData.collateralInUSD,
+        debtUSD: typeof debt === 'number' ? Math.abs(debt) : undefined,
+        perpetual: detailTypes.includes('perpetuals')
+            ? {
+                  side: additionalData.side,
+                  entryPrice: additionalData.entryPrice,
+                  markPrice: additionalData.markPrice,
+                  liquidationPrice: additionalData.liquidationPrice,
+                  leverage: additionalData.leverage,
+                  pnlUSD: additionalData.pnlUsdValue,
+                  marginRate: additionalData.marginRate,
+                  dailyFundingRate: additionalData.dailyFundingRate
+              }
+            : undefined,
+        prediction: detailTypes.includes('prediction')
+            ? {
+                  market: additionalData.predictionName,
+                  side: additionalData.side,
+                  eventEndAt: additionalData.eventEndAt,
+                  isMarketClosed: additionalData.isMarketClosed
+              }
+            : undefined,
+        assets: position.assets.map(formatDefiAsset)
+    }
+}
+
 // Velcro groups the positions by provider, here they are flattened to one entry per position
 function formatDefiPositions(
-    network: Network,
+    label: string,
     discovery?: ExternalPortfolioDiscoveryResponse
 ): PortfolioDefiPosition[] | null {
     if (!discovery) return null
@@ -168,38 +251,26 @@ function formatDefiPositions(
     const { defi } = discovery
     if (!defi || 'errorState' in defi) {
         const error = defi?.errorState[0]?.message || 'Unknown error'
-        console.error(`Error fetching DeFi positions for network ${network.name}: ${error}`)
+        console.error(`Error fetching DeFi positions for ${label}: ${error}`)
         return null
     }
 
     // An account with no DeFi positions gets an empty object back, not an error
-    const providers = getFormattedApiPositions('positions' in defi ? defi.positions || [] : [])
+    const rawProviders = 'positions' in defi ? defi.positions || [] : []
+
+    // Network amounts are already whole numbers in the token's smallest unit
+    rawProviders
+        .filter((provider) => !provider.chainId)
+        .flatMap((provider) => provider.positions.flatMap((position) => position.assets))
+        .forEach((asset) => {
+            // Velcro sends app amounts as decimal numbers, though the lib's type says bigint
+            Object.assign(asset, { amount: toPlainDecimal(asset.amount, asset.decimals) })
+        })
+
+    const providers = getFormattedApiPositions(rawProviders)
 
     return providers.flatMap((provider) =>
-        provider.positions.map((position) => ({
-            providerName: provider.providerName,
-            providerUrl: provider.siteUrl,
-            providerIconUrl: provider.iconUrl,
-            name: position.additionalData.name,
-            poolId: position.additionalData.pool?.id,
-            healthRate: position.additionalData.healthRate ?? undefined,
-            balanceUSD: position.additionalData.positionInUSD || 0,
-            assets: position.assets.map((asset) => {
-                const balance = Number(asset.amount) / Math.pow(10, asset.decimals)
-                const priceUSD = asset.priceIn?.price || 0
-
-                return {
-                    address: asset.address,
-                    balanceRaw: asset.amount.toString(),
-                    balance,
-                    balanceUSD: asset.value ?? balance * priceUSD,
-                    symbol: asset.symbol,
-                    decimals: asset.decimals,
-                    priceUSD,
-                    type: DEFI_ASSET_TYPES[asset.type]
-                }
-            })
-        }))
+        provider.positions.map((position) => formatDefiPosition(provider, position))
     )
 }
 
@@ -208,19 +279,20 @@ async function getNetworkPortfolios(
     address: string,
     networks: Network[],
     customFetch: Fetch | undefined,
-    defiMode: DefiMode
+    discoveryOptions: PortfolioDiscoveryOptions
 ) {
     // Without discovery fewer tokens are found, but the portfolio is still usable
-    const discovery = await getPortfolioDiscovery(address, networks, customFetch, defiMode).catch(
-        (err) => {
-            console.error(
-                `Error fetching portfolio discovery for ${address}: ${stringifyError(err)}`
-            )
-            return []
-        }
-    )
+    const discovery = await getPortfolioDiscovery(
+        address,
+        networks,
+        customFetch,
+        discoveryOptions
+    ).catch((err) => {
+        console.error(`Error fetching portfolio discovery for ${address}: ${stringifyError(err)}`)
+        return []
+    })
 
-    return Promise.all(
+    const networkPortfolios = await Promise.all(
         networks.map(async (network) => {
             // Velcro returns some chain ids as numbers and others as strings
             const networkDiscovery = discovery.find(
@@ -236,6 +308,11 @@ async function getNetworkPortfolios(
             return { network, discovery: networkDiscovery, tokens: formatPortfolioTokens(tokens) }
         })
     )
+
+    return {
+        networkPortfolios,
+        appsDiscovery: discovery.find((entry) => entry.chainId === APPS_CHAIN_ID)
+    }
 }
 
 export async function getPortfolioVelcroV3(
@@ -244,7 +321,9 @@ export async function getPortfolioVelcroV3(
     customFetch?: Fetch
 ): Promise<PortfolioForNetwork[]> {
     // DeFi positions aren't used, so Velcro can return its cached ones instead of refreshing them
-    const networkPortfolios = await getNetworkPortfolios(address, networks, customFetch, 'cache')
+    const { networkPortfolios } = await getNetworkPortfolios(address, networks, customFetch, {
+        defiMode: 'cache'
+    })
 
     return networkPortfolios
         .filter(({ tokens }) => tokens.length > 0)
@@ -257,17 +336,26 @@ export async function getPortfolioWithDefiVelcroV3(
     address: string,
     networks: Network[] = commonNetworks,
     customFetch?: Fetch,
-    defiMode: DefiMode = 'default'
-): Promise<PortfolioWithDefiForNetwork[]> {
-    const networkPortfolios = await getNetworkPortfolios(address, networks, customFetch, defiMode)
+    { defiMode = 'default', includeAppPositions = false }: PortfolioDiscoveryOptions = {}
+): Promise<PortfolioWithDefi> {
+    const { networkPortfolios, appsDiscovery } = await getNetworkPortfolios(
+        address,
+        networks,
+        customFetch,
+        { defiMode, includeAppPositions }
+    )
 
-    return networkPortfolios
+    const portfolio = networkPortfolios
         .map(({ network, discovery, tokens }) => ({
             network: getNetworkInfo(network),
             tokens,
-            defiPositions: formatDefiPositions(network, discovery)
+            defiPositions: formatDefiPositions(`network ${network.name}`, discovery)
         }))
         .filter(({ tokens, defiPositions }) => tokens.length > 0 || !!defiPositions?.length)
+
+    if (!includeAppPositions) return { portfolio }
+
+    return { portfolio, appPositions: formatDefiPositions('apps', appsDiscovery) }
 }
 
 export const processAddress = async (

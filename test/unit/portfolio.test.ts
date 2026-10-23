@@ -113,6 +113,9 @@ const velcroDefi = () =>
                             name: 'Lending',
                             healthRate: 1.8,
                             positionInUSD: 4000,
+                            collateralInUSD: 5000,
+                            // Misspelled and negative, as Velcro sends it
+                            deptInUSD: -1000,
                             pool: { id: AAVE_POOL }
                         }
                     }
@@ -156,6 +159,8 @@ const expectedDefiPositions: PortfolioDefiPosition[] = [
         poolId: AAVE_POOL,
         healthRate: 1.8,
         balanceUSD: 4000,
+        collateralUSD: 5000,
+        debtUSD: 1000,
         assets: [
             {
                 address: WETH_ADDRESS,
@@ -195,6 +200,169 @@ const expectedDefiPositions: PortfolioDefiPosition[] = [
                 decimals: 18,
                 priceUSD: 2500,
                 type: 'liquidity'
+            }
+        ]
+    }
+]
+// Shaped like the raw Velcro JSON for apps: decimal amounts, a top-level price and no addresses
+const velcroApps = () =>
+    ({
+        networkId: 'customAppChain',
+        chainId: 'customAppChain',
+        accountAddr: TEST_WALLET,
+        defi: {
+            positions: [
+                {
+                    providerName: 'Hyperliquid',
+                    iconUrl: 'https://example.com/hyperliquid.png',
+                    siteUrl: 'https://app.hyperliquid.xyz',
+                    type: 'Perpetuals',
+                    positionInUSD: 970.071627,
+                    positions: [
+                        {
+                            id: 'hyperliquid-1',
+                            assets: [
+                                {
+                                    name: 'USDC',
+                                    symbol: 'USDC',
+                                    decimals: 8,
+                                    price: 1,
+                                    amount: 970.071627,
+                                    type: 4,
+                                    value: 970.071627
+                                },
+                                {
+                                    name: 'BTC',
+                                    symbol: 'BTC',
+                                    decimals: 8,
+                                    price: 81626.5,
+                                    amount: 0.4947,
+                                    type: 5,
+                                    value: 40382
+                                }
+                            ],
+                            additionalData: {
+                                positionInUSD: 970.071627,
+                                collateralInUSD: 970.071627,
+                                name: 'Perpetuals',
+                                detailTypes: ['perpetuals'],
+                                pool: 'Perpetuals',
+                                description: 'Main-Account',
+                                side: 'Short',
+                                entryPrice: 81678,
+                                markPrice: 81743,
+                                liquidationPrice: 82670.4689661093,
+                                leverage: 40,
+                                pnlUsdValue: -32.1568,
+                                marginRate: 0.025,
+                                dailyFundingRate: 0
+                            }
+                        }
+                    ]
+                },
+                {
+                    providerName: 'Polymarket',
+                    iconUrl: 'https://example.com/polymarket.png',
+                    siteUrl: 'https://polymarket.com/',
+                    type: 'Prediction',
+                    positionInUSD: 93,
+                    positions: [
+                        {
+                            id: 'polymarket-1',
+                            assets: [
+                                {
+                                    name: 'Will it rain tomorrow?',
+                                    symbol: 'Yes',
+                                    decimals: 6,
+                                    price: 0.62,
+                                    amount: 150,
+                                    type: 6,
+                                    value: 93
+                                }
+                            ],
+                            additionalData: {
+                                positionInUSD: 93,
+                                collateralInUSD: 93,
+                                name: 'Prediction',
+                                detailTypes: ['prediction'],
+                                pool: 'Will it rain tomorrow?',
+                                side: 'Yes',
+                                predictionName: 'Will it rain tomorrow?',
+                                predictionAmount: 150,
+                                predictionPrice: 0.62,
+                                eventEndAt: 1798761600,
+                                isMarketClosed: false
+                            }
+                        }
+                    ]
+                }
+            ],
+            updatedAt: 0
+        },
+        otherNetworksDefiCounts: {}
+    }) as unknown as ExternalPortfolioDiscoveryResponse
+const expectedAppPositions: PortfolioDefiPosition[] = [
+    {
+        providerName: 'Hyperliquid',
+        providerUrl: 'https://app.hyperliquid.xyz',
+        providerIconUrl: 'https://example.com/hyperliquid.png',
+        name: 'Perpetuals',
+        description: 'Main-Account',
+        balanceUSD: 970.071627,
+        collateralUSD: 970.071627,
+        perpetual: {
+            side: 'Short',
+            entryPrice: 81678,
+            markPrice: 81743,
+            liquidationPrice: 82670.4689661093,
+            leverage: 40,
+            pnlUSD: -32.1568,
+            marginRate: 0.025,
+            dailyFundingRate: 0
+        },
+        assets: [
+            {
+                balanceRaw: '97007162700',
+                balance: 970.071627,
+                balanceUSD: 970.071627,
+                symbol: 'USDC',
+                decimals: 8,
+                priceUSD: 1,
+                type: 'margin'
+            },
+            {
+                balanceRaw: '49470000',
+                balance: 0.4947,
+                balanceUSD: 40382,
+                symbol: 'BTC',
+                decimals: 8,
+                priceUSD: 81626.5,
+                type: 'perpetual'
+            }
+        ]
+    },
+    {
+        providerName: 'Polymarket',
+        providerUrl: 'https://polymarket.com/',
+        providerIconUrl: 'https://example.com/polymarket.png',
+        name: 'Prediction',
+        balanceUSD: 93,
+        collateralUSD: 93,
+        prediction: {
+            market: 'Will it rain tomorrow?',
+            side: 'Yes',
+            eventEndAt: 1798761600,
+            isMarketClosed: false
+        },
+        assets: [
+            {
+                balanceRaw: '150000000',
+                balance: 150,
+                balanceUSD: 93,
+                symbol: 'Yes',
+                decimals: 6,
+                priceUSD: 0.62,
+                type: 'prediction'
             }
         ]
     }
@@ -322,7 +490,7 @@ describe('Portfolio unit tests', () => {
     })
 
     test('should request the given DeFi mode from Velcro', async () => {
-        await getPortfolioDiscovery(TEST_WALLET, commonNetworks, undefined, 'force')
+        await getPortfolioDiscovery(TEST_WALLET, commonNetworks, undefined, { defiMode: 'force' })
 
         expect(getRequestedUrl().searchParams.get('defi')).toEqual('force')
     })
@@ -332,12 +500,9 @@ describe('Portfolio unit tests', () => {
         try {
             mockedFetch.mockImplementation(() => new Promise(() => {}))
             const withCache = getPortfolioDiscovery(TEST_WALLET).catch((e) => e.message)
-            const withDefi = getPortfolioDiscovery(
-                TEST_WALLET,
-                commonNetworks,
-                undefined,
-                'default'
-            ).catch((e) => e.message)
+            const withDefi = getPortfolioDiscovery(TEST_WALLET, commonNetworks, undefined, {
+                defiMode: 'default'
+            }).catch((e) => e.message)
             let isDefiSettled = false
             withDefi.then(() => (isDefiSettled = true))
 
@@ -416,13 +581,15 @@ describe('Portfolio unit tests', () => {
 
         expect(mockedFetch).toHaveBeenCalledTimes(1)
         expect(getRequestedUrl().searchParams.get('defi')).toEqual('default')
+        expect(getRequestedUrl().searchParams.get('networks')).toEqual('1')
         expect(mockPortfolioGet.mock.calls[0][1].additionalErc20Hints).toEqual([USDC_ADDRESS])
 
-        expect(res).toHaveLength(1)
-        expect(res[0].network.name).toEqual('Ethereum')
-        expect(res[0].tokens).toHaveLength(1)
-        expect(res[0].tokens[0].symbol).toEqual('USDC')
-        expect(res[0].defiPositions).toEqual(expectedDefiPositions)
+        expect(res).not.toHaveProperty('appPositions')
+        expect(res.portfolio).toHaveLength(1)
+        expect(res.portfolio[0].network.name).toEqual('Ethereum')
+        expect(res.portfolio[0].tokens).toHaveLength(1)
+        expect(res.portfolio[0].tokens[0].symbol).toEqual('USDC')
+        expect(res.portfolio[0].defiPositions).toEqual(expectedDefiPositions)
     })
 
     test('should include networks with DeFi positions but no tokens', async () => {
@@ -430,25 +597,138 @@ describe('Portfolio unit tests', () => {
         mockedFetch.mockImplementation(() =>
             mockFetchResponse([{ ...mockedDiscovery, defi: velcroDefi() }])
         )
-        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+        const { portfolio } = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
 
-        expect(res).toHaveLength(1)
-        expect(res[0].tokens).toHaveLength(0)
-        expect(res[0].defiPositions).toEqual(expectedDefiPositions)
+        expect(portfolio).toHaveLength(1)
+        expect(portfolio[0].tokens).toHaveLength(0)
+        expect(portfolio[0].defiPositions).toEqual(expectedDefiPositions)
     })
 
     test('should leave out networks with neither tokens nor DeFi positions', async () => {
         mockPortfolioGet.mockReturnValue(Promise.resolve({ tokens: [] }))
-        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+        const { portfolio } = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
 
-        expect(res).toHaveLength(0)
+        expect(portfolio).toHaveLength(0)
     })
 
     test('should return no DeFi positions, not null, when Velcro sends an empty object', async () => {
         mockedFetch.mockImplementation(() => mockFetchResponse([{ ...mockedDiscovery, defi: {} }]))
-        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+        const { portfolio } = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
 
-        expect(res[0].defiPositions).toEqual([])
+        expect(portfolio[0].defiPositions).toEqual([])
+    })
+
+    test('should get the app positions from the same Velcro request when requested', async () => {
+        mockedFetch.mockImplementation(() =>
+            mockFetchResponse([{ ...mockedDiscovery, defi: velcroDefi() }, velcroApps()])
+        )
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET, commonNetworks, undefined, {
+            includeAppPositions: true
+        })
+
+        expect(mockedFetch).toHaveBeenCalledTimes(1)
+        expect(getRequestedUrl().searchParams.get('networks')).toEqual('1,customAppChain')
+        // The apps entry has no token hints, so no balances are read for it
+        expect(mockPortfolioGet).toHaveBeenCalledTimes(1)
+
+        expect(res.portfolio).toHaveLength(1)
+        expect(res.portfolio[0].defiPositions).toEqual(expectedDefiPositions)
+        expect(res.appPositions).toEqual(expectedAppPositions)
+    })
+
+    test('should keep app positions with amounts in exponent notation', async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+        const apps = velcroApps()
+        const asset = (symbol: string, amount: number, decimals: number) => ({
+            name: symbol,
+            symbol,
+            decimals,
+            price: 1,
+            amount,
+            type: 1,
+            value: amount
+        })
+        // As in a live Hyperliquid deposit, which ambire-common alone drops
+        Object.assign(apps.defi, {
+            positions: [
+                {
+                    providerName: 'Hyperliquid',
+                    iconUrl: 'https://example.com/hyperliquid.png',
+                    siteUrl: 'https://app.hyperliquid.xyz',
+                    type: 'Deposit',
+                    positions: [
+                        {
+                            id: 'hyperliquid-2',
+                            assets: [
+                                asset('USDC', 5.3e-7, 8),
+                                asset('MAX', 1.5e21, 6),
+                                asset('HYPE', 0.01433447, 8)
+                            ],
+                            additionalData: { name: 'Deposit', positionInUSD: 1.5e21 }
+                        }
+                    ]
+                }
+            ]
+        })
+        mockedFetch.mockImplementation(() => mockFetchResponse([mockedDiscovery, apps]))
+
+        const { appPositions } = await getPortfolioWithDefiVelcroV3(
+            TEST_WALLET,
+            commonNetworks,
+            undefined,
+            { includeAppPositions: true }
+        )
+
+        expect(consoleError).not.toHaveBeenCalled()
+        expect(appPositions).toHaveLength(1)
+        expect(
+            appPositions![0].assets.map(({ symbol, balanceRaw, balance }) => ({
+                symbol,
+                balanceRaw,
+                balance
+            }))
+        ).toEqual([
+            { symbol: 'USDC', balanceRaw: '53', balance: 5.3e-7 },
+            { symbol: 'MAX', balanceRaw: '1500000000000000000000000000', balance: 1.5e21 },
+            { symbol: 'HYPE', balanceRaw: '1433447', balance: 0.01433447 }
+        ])
+
+        consoleError.mockRestore()
+    })
+
+    test('should set app positions to null when Velcro does not return them', async () => {
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET, commonNetworks, undefined, {
+            includeAppPositions: true
+        })
+
+        expect(res).toHaveProperty('appPositions')
+        expect(res.appPositions).toBeNull()
+        expect(res.portfolio).toHaveLength(1)
+    })
+
+    test('should set app positions to null when Velcro fails to get them', async () => {
+        const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
+        mockedFetch.mockImplementation(() =>
+            mockFetchResponse([
+                mockedDiscovery,
+                {
+                    ...velcroApps(),
+                    defi: {
+                        success: false,
+                        errorState: [{ message: 'DeBank is down', level: 'fatal' }]
+                    }
+                }
+            ])
+        )
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET, commonNetworks, undefined, {
+            includeAppPositions: true
+        })
+
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('apps: DeBank is down'))
+        expect(res.appPositions).toBeNull()
+        expect(res.portfolio[0].defiPositions).toEqual([])
+
+        consoleError.mockRestore()
     })
 
     test('should keep the tokens and set DeFi positions to null when Velcro fails to get them', async () => {
@@ -464,23 +744,28 @@ describe('Portfolio unit tests', () => {
                 }
             ])
         )
-        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+        const { portfolio } = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
 
-        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('DeBank is down'))
+        expect(consoleError).toHaveBeenCalledWith(
+            expect.stringContaining('network Ethereum: DeBank is down')
+        )
         expect(mockPortfolioGet.mock.calls[0][1].additionalErc20Hints).toEqual([USDC_ADDRESS])
-        expect(res[0].tokens).toHaveLength(1)
-        expect(res[0].defiPositions).toBeNull()
+        expect(portfolio[0].tokens).toHaveLength(1)
+        expect(portfolio[0].defiPositions).toBeNull()
 
         consoleError.mockRestore()
     })
 
-    test('should keep the tokens and set DeFi positions to null when discovery fails', async () => {
+    test('should keep the tokens and set DeFi and app positions to null when discovery fails', async () => {
         const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {})
         mockedFetch.mockImplementation(() => Promise.reject(new Error('Network down')))
-        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET)
+        const res = await getPortfolioWithDefiVelcroV3(TEST_WALLET, commonNetworks, undefined, {
+            includeAppPositions: true
+        })
 
-        expect(res[0].tokens).toHaveLength(1)
-        expect(res[0].defiPositions).toBeNull()
+        expect(res.portfolio[0].tokens).toHaveLength(1)
+        expect(res.portfolio[0].defiPositions).toBeNull()
+        expect(res.appPositions).toBeNull()
 
         consoleError.mockRestore()
     })
